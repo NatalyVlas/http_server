@@ -1,52 +1,170 @@
 const http = require('http');
 const fs = require('fs');
-const path = require('path');
 
 const host = 'localhost';
 const port = 8000;
+const user = {
+    id: 123,
+    username: 'testuser',
+    password: 'qwerty'
+};
+
+function parseCookies(request) {
+    const list = {};
+    const cookieHeader = request.headers?.cookie;
+    if (!cookieHeader) return list;
+
+    cookieHeader.split(`;`).forEach(function (cookie) {
+        let [name, ...rest] = cookie.split(`=`);
+        name = name?.trim();
+        if (!name) return;
+        const value = rest.join(`=`).trim();
+        if (!value) return;
+        list[name] = decodeURIComponent(value);
+    });
+
+    return list;
+}
 
 const requestListener = (req, res) => {
-    if (req.url === '/delete') {
-        if (req.method === 'DELETE') {
+    res.setHeader('Content-Type', 'text/html');
+
+    const cookies = parseCookies(req);
+
+    switch (req.url) {
+        case '/auth':
+            if (req.method !== 'POST') {
+                const errMessage = `HTTP method not allowed`;
+                res.writeHead(405);
+                res.end(errMessage);
+                break;
+            }
+
+            const body = [];
+            let dataObj = {};
+
+            req.on('data', (data) => {
+                body.push(data)
+            });
+
+            req.on('end', () => {
+                dataObj = JSON.parse(Buffer.concat(body).toString());
+                if ((dataObj?.username === user.username) && (dataObj?.password === user.password)) {
+                    const lifetime = new Date(new Date().getTime() + (1000 * 3600 * 24 * 2)).toUTCString();
+                    res.writeHead(200, {
+                        'Set-Cookie': [
+                            'userId=' + user.id + '; expires=' + lifetime,
+                            'authorized=true; expires=' + lifetime
+                        ],
+                    });
+                    res.end('Success!');
+                } else {
+                    res.writeHead(400, {
+                        'Set-Cookie': [
+                            'userId= ; expires=0',
+                            'authorized=false; expires=0'
+                        ]
+                    });
+                    res.end('Неверный логин или пароль');
+                }
+            });
+            break;
+
+        case '/get':
+            if (req.method !== 'GET') {
+                const errMessage = `HTTP method not allowed`;
+                res.writeHead(405);
+                res.end(errMessage);
+                break;
+            }
+
+            try {
+                filenames = fs.readdirSync(__dirname + '/files');
+            } catch (err) {
+                res.writeHead(500);
+                res.end('Internal server error');
+                break;
+            }
+
+            res.writeHead(200);
+            res.end(filenames.join(', '));
+            break;
+
+        case '/delete':
+            if (req.method !== 'DELETE') {
+                const errMessage = `HTTP method not allowed`;
+                res.writeHead(405);
+                res.end(errMessage);
+                break;
+            }
+
+            const delBody = [];
+            let delData = {};
+
+            req.on('data', (data) => {
+                delBody.push(data)
+            });
+
+            req.on('end', () => {
+                delData = JSON.parse(Buffer.concat(delBody).toString());
+                console.log(delData);
+                if (cookies.authorized === 'true' && +cookies.userId === user.id) {
+                    try {
+                        fs.unlinkSync(`${__dirname}/files/${delData.filename}`);
+                    } catch (err) {
+                        console.log('Error deleting file: ', err);
+                    }
+                }
+            });
             res.writeHead(200);
             res.end('Success!');
-        } else {
-            res.writeHead(405);
-            res.end('HTTP method not allowed');
-        }
-    } else if (req.url === '/post') {
-        if (req.method === 'POST') {
+            break;
+
+        case '/post':
+            if (req.method !== 'POST') {
+                const errMessage = `HTTP method not allowed`;
+                res.writeHead(405);
+                res.end(errMessage);
+                break;
+            }
+
+            const postBody = [];
+            let postData = {};
+
+            req.on('data', (data) => {
+                postBody.push(data)
+            });
+
+            req.on('end', () => {
+                postData = JSON.parse(Buffer.concat(postBody).toString());
+                console.log(postData);
+                if (cookies.authorized === 'true' && +cookies.userId === user.id) {
+                    try {
+                        fs.appendFileSync(`${__dirname}/files/${postData?.filename}`, postData?.content);
+                    } catch (err) {
+                        console.log('Error appenging to file: ', err);
+                    }
+                }
+            });
             res.writeHead(200);
             res.end('Success!');
-        } else {
-            res.writeHead(405);
-            res.end('HTTP method not allowed');
-        }
-    } else if (req.url === '/get') {
-        if (req.method === 'GET') {
-            const files = fs.readdirSync(path.join(__dirname, "files"))
-            let array = []
-            files.forEach(file => {
-                array.push(file)
-            })
-            res.writeHead(200);
-            res.end(`Success! ${array.join(', ')}`);
-        } else {
-            res.writeHead(405);
-            res.end('HTTP method not allowed');
-        }
-    } else if (req.url === '/redirect' & req.method === 'GET') {
-        res.writeHead(301);
-        req.url = '/redirected';
-        res.end(`Ресурс доступен по новому адресу http://${host}:${port}${req.url}`);
-    } else {
-        res.writeHead(404);
-        res.end('Not Found');
+            break;
+
+        case '/redirect':
+            if (req.method === 'GET') {
+                res.writeHead(301, { Location: '/redirected' }).end();
+                break;
+            }
+
+        default:
+            res.writeHead(404);
+            res.end('Not Found!');
+            break;
     }
-};
+}
 
 const server = http.createServer(requestListener);
 
 server.listen(port, host, () => {
     console.log(`Сервер запущен и доступен по адресу http://${host}:${port}`);
-});
+})
